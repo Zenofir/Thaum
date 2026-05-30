@@ -16,14 +16,18 @@
 				<h1>⬡ Thaumcraft 4 Research Solver ⬡</h1>
 			</div>
 			<div id="canvas_selector_wrapper">
-				<canvas id='canvas' onclick="handle_click(event)"></canvas>
+				<div id="canvas_wrapper">
+					<canvas id='canvas' onclick="handle_click(event)"></canvas>
+				</div>
 				<div id="aspect_selector_modpack_wrapper">
 					<div id="aspect_selector_gui"></div>
+				<div id="no_results_msg" style="display:none">Aucun aspect trouvé</div>
 					<br>
 					<div id="search_modpack_wrapper">
 						<div id="search_wrapper">
-						<label for="search_box">Search: </label>
-						<input id="search_box" type="text" name="search box" oninput="search(this)">
+							<label for="search_box">Recherche</label>
+							<input id="search_box" type="text" name="search box" placeholder="Nom ou signification…" oninput="search(this)" autocomplete="off">
+							<button id="search_clear" onclick="clearSearch()" aria-label="Effacer" style="display:none">×</button>
 						</div>
 						<br>
 						<div id="modpack_selector">
@@ -522,21 +526,56 @@
 		draw_grid(grid);
 	}
 
-	/* Resizing the canvas 31.25 percent of screen width (400 px if the screen is 1280 px wide) */
-	//alert(screen.width);
-	//1536
-	//var screen_percentage = 31.25;
-	if (screen.width >= 1000) {
-		canvas.height = screen.width / 100 * 32;
-		canvas.width = screen.width / 100 * 32;
-		document.getElementById('aspect_selector_modpack_wrapper').style.height = Math.floor(screen.width / 100 * 32) + 'px';
-	} else if (screen.width >= 500) {
-		canvas.height = screen.width / 100 * 50;
-		canvas.width = screen.width / 100 * 50;
-	} else if (screen.width < 500) {
-		canvas.height = screen.width;
-		canvas.width = screen.width
-		canvas.style.marginLeft = '-10px';
+	function _apply_canvas_size(size) {
+		const sidebar = document.getElementById('aspect_selector_modpack_wrapper');
+
+		// Sauvegarder l'état courant de la grille
+		let saved = [];
+		if (typeof grid !== 'undefined') {
+			for (let i = 0; i < grid.length; i++) {
+				saved.push([]);
+				for (let j = 0; j < grid[i].length; j++) {
+					saved[i].push({ aspect: grid[i][j].aspect, barred: grid[i][j].barred });
+				}
+			}
+		}
+
+		canvas.width  = size;
+		canvas.height = size;
+		canvas.style.height = size + 'px';
+
+		// Aligner la hauteur de la sidebar sur le canvas en layout côte-à-côte
+		if (window.innerWidth >= 800) {
+			sidebar.style.height = size + 'px';
+		} else {
+			sidebar.style.height = '';
+		}
+
+		// Reconstruire la grille aux nouvelles dimensions et restaurer les aspects
+		if (typeof grid !== 'undefined') {
+			const gs = parseInt(document.getElementById('grid_size_input').value) || 5;
+			grid = draw_initial_grid(gs);
+			current_state.grid = grid;
+			for (let i = 0; i < Math.min(saved.length, grid.length); i++) {
+				for (let j = 0; j < Math.min(saved[i].length, grid[i].length); j++) {
+					grid[i][j].aspect = saved[i][j].aspect;
+					grid[i][j].barred = saved[i][j].barred;
+				}
+			}
+			draw_grid(grid);
+		}
+	}
+
+	// Dimensionnement initial synchrone (le DOM est rendu, getBoundingClientRect() est fiable)
+	_apply_canvas_size(Math.max(200, Math.floor(document.getElementById('canvas_wrapper').getBoundingClientRect().width)));
+
+	// ResizeObserver : redimensionne le canvas dès que son conteneur CSS change de taille
+	if (typeof ResizeObserver !== 'undefined') {
+		const _canvasRO = new ResizeObserver(entries => {
+			const w = Math.floor(entries[0].contentRect.width);
+			if (w > 50 && w !== canvas.width) _apply_canvas_size(w);
+		});
+		_canvasRO.observe(document.getElementById('canvas_wrapper'));
 	}
 	
 	
@@ -979,18 +1018,28 @@
 	}
 
 	function search(box) {
+		const query = box.value.toLowerCase().trim();
+
+		// Show/hide clear button
+		const clearBtn = document.getElementById('search_clear');
+		if (clearBtn) clearBtn.style.display = query ? 'flex' : 'none';
+
 		let results_beginning = [];
 		let results_anywhere = [];
+
 		for (let i = 0; i < keylen(all_aspect_table); i++) {
-			if (keyAtIndex(all_aspect_table, i).startsWith(box.value.toLowerCase())) {
-				results_beginning.push(keyAtIndex(all_aspect_table, i));
-			} else if (keyAtIndex(all_aspect_table, i).includes(box.value.toLowerCase())) {
-				results_anywhere.push(keyAtIndex(all_aspect_table, i));
+			const name   = keyAtIndex(all_aspect_table, i);
+			const flavor = (all_aspect_flavor_dict[name] || '').toLowerCase();
+
+			if (!query) {
+				results_beginning.push(name);
+			} else if (name.startsWith(query) || flavor.startsWith(query)) {
+				results_beginning.push(name);
+			} else if (name.includes(query) || flavor.includes(query)) {
+				results_anywhere.push(name);
 			}
 		}
-		//console.log(results_beginning);
-		//console.log(results_anywhere);
-		let aspect_selector_gui = document.getElementById('aspect_selector_gui');
+
 		aspect_flavor_dict = {};
 		for (let i = 0; i < results_beginning.length; i++) {
 			aspect_flavor_dict[results_beginning[i]] = all_aspect_flavor_dict[results_beginning[i]];
@@ -998,7 +1047,18 @@
 		for (let i = 0; i < results_anywhere.length; i++) {
 			aspect_flavor_dict[results_anywhere[i]] = all_aspect_flavor_dict[results_anywhere[i]];
 		}
+
 		load_aspect_selector(false);
+
+		const noMsg = document.getElementById('no_results_msg');
+		if (noMsg) noMsg.style.display = keylen(aspect_flavor_dict) === 0 ? 'flex' : 'none';
+	}
+
+	function clearSearch() {
+		const box = document.getElementById('search_box');
+		box.value = '';
+		search(box);
+		box.focus();
 	}
 
 	/* Image cache (for debugging) */
@@ -1611,97 +1671,53 @@
 		return counter;
 	}
 
-	/* Finds shortest path from one cell to another considering blacklisted paths */
+	/* Finds shortest path from one cell to another using BFS.
+	   Guarantees minimum number of intermediate cells.
+	   Falls back to longer paths only if the shortest is blacklisted. */
 	function find_path(id1, id2, state) {
-		//let res = [];
-		/*state.blacklisted_paths.push([0, 1, 2, 3]);
-		state.blacklisted_paths.push([0, 1, 6, 2, 3]);
-		state.blacklisted_paths.push([0, 1, 6, 7, 3]);*/
+		if (id1 === id2) return null;
 
-		let cell1 = get_cell_by_id(id1, state.grid);
-		let cell2 = get_cell_by_id(id2, state.grid);
-		let found = false;
-		let depth_limit = 100000;
-		let current_depht = 0;
-		let path_return_from_bad_state = false;
-		let path_state_history = [];
-		class Path_state {
-			constructor(starting_cell_id) {
-				//'parent':'blacklisted child'
-				this.blacklist_dict = {};
-				this.current_path = [starting_cell_id];
-			}
-		}
-		let original_path = new Path_state(id1);
-		let current_path_state = new Path_state(id1);
-		while(!found) {
-			current_depht++;
-			if (current_depht == depth_limit) {
-				return null;
-			}
-			if (!path_return_from_bad_state) {
-				let cell_to_append = null;
-				if (current_path_state.blacklist_dict.hasOwnProperty(current_path_state.current_path[current_path_state.current_path.length - 1])) {
-					cell_to_append = get_cell_by_id(closest_neighbor_to_cell(current_path_state.current_path[current_path_state.current_path.length - 1], id2, state, [], current_path_state.blacklist_dict[current_path_state.current_path[current_path_state.current_path.length - 1]].concat(current_path_state.current_path), true, current_path_state.current_path), state.grid);
-				} else {
-					cell_to_append = get_cell_by_id(closest_neighbor_to_cell(current_path_state.current_path[current_path_state.current_path.length - 1], id2, state, [], [], true, current_path_state.current_path), state.grid);
-				}
-				if (cell_to_append) {
-					current_path_state.current_path.push(cell_to_append.id);
-					path_state_history.push(deepcopy(current_path_state));
+		// Borne haute : nombre de cases non-barrées (longueur max d'un chemin simple)
+		let max_len = 0;
+		for (let i = 0; i < state.grid.length; i++)
+			for (let j = 0; j < state.grid[i].length; j++)
+				if (!state.grid[i][j].barred) max_len++;
 
-					let grid_copy = deepcopy(state.grid);
-					for (let i = 0; i < grid_copy.length; i++) {
-						for (let j = 0; j < grid_copy[i].length; j++) {
-							if (!current_path_state.current_path.includes(grid_copy[i][j].id) && grid_copy[i][j].id != id2) {
-								grid_copy[i][j].barred = true;
-							}
+		// BFS — chaque entrée de la file est un tableau d'IDs de cellules (chemin partiel)
+		// On ne garde PAS de visited global pour pouvoir retourner des chemins alternatifs
+		// quand le plus court est blacklisté. Les cycles sont évités par path.includes().
+		const queue = [[id1]];
+
+		while (queue.length > 0) {
+			const path = queue.shift();
+			if (path.length > max_len) break; // sécurité
+
+			const current = get_cell_by_id(path[path.length - 1], state.grid);
+			const neighbors = tile_neighbors_wo_aspects(current.array_x, current.array_y, state.grid);
+
+			for (let i = 0; i < neighbors.length; i++) {
+				const nb = state.grid[neighbors[i][0]][neighbors[i][1]];
+
+				if (nb.id === id2) {
+					// Chemin candidat trouvé — vérifier qu'il n'est pas blacklisté
+					const candidate = path.concat([id2]);
+					let blacklisted = false;
+					for (let b = 0; b < state.blacklisted_paths.length; b++) {
+						if (arrays_equal(state.blacklisted_paths[b], candidate)) {
+							blacklisted = true;
+							break;
 						}
 					}
-					if (inArray(neighbor_chain(cell1.array_x, cell1.array_y, grid_copy, true), [cell2.array_x, cell2.array_y])) {
-						current_path_state.current_path.push(id2);
-						let same = false;
-						for (let i = 0; i < state.blacklisted_paths.length; i++) {
-							if (arrays_equal(state.blacklisted_paths[i], current_path_state.current_path)) {
-								same = true;
-								path_return_from_bad_state = true;
-								break;
-							}
-						}
-						if (!same) {
-							return current_path_state.current_path;
-						}
-					}
-				} else {
-					path_return_from_bad_state = true;
+					if (!blacklisted) return candidate;
+					// Blacklisté : continuer le BFS pour trouver un chemin plus long
+
+				} else if (!nb.barred && nb.aspect === 'none' && !path.includes(nb.id)) {
+					queue.push(path.concat([nb.id]));
 				}
-			} else {
-				// path_state_history.pop();
-				// if (path_state_history.length == 0) {
-				// 	path_state_history.push(deepcopy(original_path));
-				// }
-				//if (path_state_history[path_state_history.length - 1].blacklist_dict[current_path_state.current_path[current_path_state.current_path.length - 3]] == undefined) {
-				//	path_state_history[path_state_history.length - 1].blacklist_dict[current_path_state.current_path[current_path_state.current_path.length - 3]] = [];
-				//}
-
-				if (path_state_history[path_state_history.length - 1].blacklist_dict[current_path_state.current_path[current_path_state.current_path.length - 2]] == undefined) {
-					path_state_history[path_state_history.length - 1].blacklist_dict[current_path_state.current_path[current_path_state.current_path.length - 2]] = [];
-				}
-				path_state_history[path_state_history.length - 1].blacklist_dict[current_path_state.current_path[current_path_state.current_path.length - 2]].push(current_path_state.current_path[current_path_state.current_path.length - 1]);
-				
-
-				//path_state_history[path_state_history.length - 1].blacklist_dict[current_path_state.current_path[current_path_state.current_path.length - 3]].push(current_path_state.current_path[current_path_state.current_path.length - 2]);
-
-
-
-				current_path_state = deepcopy(path_state_history[path_state_history.length - 1]);
-				path_state_history.pop();
-				if (path_state_history.length == 0) {
-					path_state_history.push(deepcopy(original_path));
-				}
-				path_return_from_bad_state = false;
 			}
 		}
+
+		return null; // Aucun chemin possible
 	}
 
 	/* Removes dupes form an array */
@@ -1765,46 +1781,56 @@
 		return false;
 	}
 
+	/* Supprime les aspects intermédiaires superflus sur le chemin courant.
+	   Tourne en boucle jusqu'à convergence : chaque passe peut libérer
+	   de nouvelles cases, permettant des raccourcis supplémentaires. */
 	function remove_excess_aspects(state) {
-		for (let i = 0; i < state.current_path.length - 2; i++) {
-			let cell1 = get_cell_by_id(state.current_path[i], state.grid);
-			let cell2 = get_cell_by_id(state.current_path[i + 1], state.grid);
-			let cell3 = get_cell_by_id(state.current_path[i + 2], state.grid);
-			if (cell1.aspect == 'none' || cell2.aspect == 'none' || cell3.aspect == 'none') {
-				continue;
-			}
-			let cell1_neighbors = tile_neighbors(cell1.array_x, cell1.array_y, state.grid, true);
-			let are_neighbors = false;
-			for (let j = 0; j < cell1_neighbors.length; j++) {
-				if (cell3.id == state.grid[cell1_neighbors[j][0]][cell1_neighbors[j][1]].id) {
-					are_neighbors = true;
-				}
-			}
-			if (are_neighbors && can_connect(cell1.aspect, cell3.aspect)) {
-				cell2.aspect = 'none';//cell3.aspect = 'none';
-				if (debugging) {
-					draw_grid(state.grid);
-				}
-			}
-		}
-		for (let i = 1; i < state.current_path.length - 1; i++) {
-			let cell1 = get_cell_by_id(state.current_path[i], state.grid);
-			if (cell1.aspect == 'none') {
-				continue;
-			}
-			let cell_neighbors = tile_neighbors(cell1.array_x, cell1.array_y, state.grid, true);
-			let connected_count = 0;
-			for (let j = 0; j < cell_neighbors.length; j++) {
-				if (can_connect(cell1.aspect, state.grid[cell_neighbors[j][0]][cell_neighbors[j][1]].aspect)) {
-					connected_count ++;
-				}
-			}
-			if (connected_count == 1) {
-					cell1.aspect = 'none';
-					if (debugging) {
-						draw_grid(state.grid);
+		let changed = true;
+		while (changed) {
+			changed = false;
+
+			// Passe 1 — raccourcis directs : si cell[i] et cell[i+2] sont voisines
+			// et peuvent se connecter, cell[i+1] est inutile.
+			for (let i = 0; i < state.current_path.length - 2; i++) {
+				let cell1 = get_cell_by_id(state.current_path[i], state.grid);
+				let cell2 = get_cell_by_id(state.current_path[i + 1], state.grid);
+				let cell3 = get_cell_by_id(state.current_path[i + 2], state.grid);
+				if (cell1.aspect === 'none' || cell2.aspect === 'none' || cell3.aspect === 'none') continue;
+
+				let cell1_neighbors = tile_neighbors(cell1.array_x, cell1.array_y, state.grid, true);
+				let are_neighbors = false;
+				for (let j = 0; j < cell1_neighbors.length; j++) {
+					if (cell3.id === state.grid[cell1_neighbors[j][0]][cell1_neighbors[j][1]].id) {
+						are_neighbors = true;
+						break;
 					}
 				}
+				if (are_neighbors && can_connect(cell1.aspect, cell3.aspect)) {
+					cell2.aspect = 'none';
+					changed = true;
+					if (debugging) draw_grid(state.grid);
+				}
+			}
+
+			// Passe 2 — cellules sans connexion utile (une seule connexion = cul-de-sac
+			// apparu après la passe 1).
+			for (let i = 1; i < state.current_path.length - 1; i++) {
+				let cell1 = get_cell_by_id(state.current_path[i], state.grid);
+				if (cell1.aspect === 'none') continue;
+
+				let cell_neighbors = tile_neighbors(cell1.array_x, cell1.array_y, state.grid, true);
+				let connected_count = 0;
+				for (let j = 0; j < cell_neighbors.length; j++) {
+					if (can_connect(cell1.aspect, state.grid[cell_neighbors[j][0]][cell_neighbors[j][1]].aspect)) {
+						connected_count++;
+					}
+				}
+				if (connected_count === 1) {
+					cell1.aspect = 'none';
+					changed = true;
+					if (debugging) draw_grid(state.grid);
+				}
+			}
 		}
 	}
 
